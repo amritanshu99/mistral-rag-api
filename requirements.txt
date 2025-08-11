@@ -1,10 +1,8 @@
+Flask
 langchain
 langchain-community
-flask
 transformers
 torch
+faiss-cpu
 sentence-transformers
-chromadb
-huggingface_hub
-accelerate
 gunicorn

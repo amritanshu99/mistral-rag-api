@@ -9,17 +9,9 @@ from langchain_community.llms import HuggingFacePipeline
 
 from transformers import pipeline
 import os
-
-import hashlib
-from transformers import pipeline
+import uuid
 
 app = Flask(__name__)
-
-# Global stores
-vectorstore_cache = {}  # session_id -> vectorstore
-memory_store = {}       # session_id -> ConversationBufferMemory
-llm = None
-embeddings = None
 
 QA_PROMPT = PromptTemplate(
     input_variables=["context", "question"],
@@ -38,48 +30,36 @@ Answer:
 )
 
 def get_hf_llm():
-    global llm
-    if llm is None:
-        pipe = pipeline(
-            "text2text-generation",
-            model="google/flan-t5-small",
-            max_length=256,
-            do_sample=False
-        )
-        llm = HuggingFacePipeline(pipeline=pipe)
-    return llm
+    pipe = pipeline(
+        "text2text-generation",
+        model="google/flan-t5-small",
+        max_length=128,  # shorter output
+        do_sample=False
+    )
+    return HuggingFacePipeline(pipeline=pipe)
 
 def get_embeddings():
-    global embeddings
-    if embeddings is None:
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    return embeddings
+    return HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-MiniLM-L3-v2")
 
 @app.route("/load_blog", methods=["POST"])
 def load_blog():
     data = request.json
-    session_id = data.get("session_id")
+    session_id = data.get("session_id") or str(uuid.uuid4())
     blog_content = data.get("blog_content", "").strip()
 
-    if not session_id:
-        return jsonify({"error": "session_id is required"}), 400
     if not blog_content:
         return jsonify({"error": "blog_content is required"}), 400
 
     try:
-        # Create document and embeddings once per session/blog load
         docs = [Document(page_content=blog_content)]
         emb = get_embeddings()
 
-        # In-memory vectorstore for this session
-        vectorstore_cache[session_id] = Chroma.from_documents(docs, emb)
-        memory_store[session_id] = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True,
-            max_token_limit=1000
-        )
+        # Store vectorstore on disk (temporary)
+        persist_dir = f"/tmp/{session_id}"
+        os.makedirs(persist_dir, exist_ok=True)
+        Chroma.from_documents(docs, emb, persist_directory=persist_dir)
 
-        return jsonify({"message": f"Blog content loaded and embeddings created for session '{session_id}'."})
+        return jsonify({"message": "Blog content loaded.", "session_id": session_id})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -95,18 +75,20 @@ def ask():
     if not question:
         return jsonify({"error": "question is required"}), 400
 
-    if session_id not in vectorstore_cache or session_id not in memory_store:
-        return jsonify({"error": "Session not initialized. Please load blog content first via /load_blog."}), 400
+    persist_dir = f"/tmp/{session_id}"
+    if not os.path.exists(persist_dir):
+        return jsonify({"error": "Session not found. Please load blog first."}), 400
 
     try:
-        vectorstore = vectorstore_cache[session_id]
-        memory = memory_store[session_id]
+        emb = get_embeddings()
+        vectorstore = Chroma(persist_directory=persist_dir, embedding_function=emb)
+        retriever = vectorstore.as_retriever(search_kwargs={"k": 1})
 
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
-        hf_llm = get_hf_llm()
+        memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True, max_token_limit=300)
+        llm = get_hf_llm()
 
         qa_chain = ConversationalRetrievalChain.from_llm(
-            llm=hf_llm,
+            llm=llm,
             retriever=retriever,
             memory=memory,
             combine_docs_chain_kwargs={"prompt": QA_PROMPT}
@@ -114,10 +96,7 @@ def ask():
 
         result = qa_chain({"question": question})
 
-        return jsonify({
-            "answer": result["answer"],
-            "chat_history": [m.dict() for m in memory.chat_memory.messages]
-        })
+        return jsonify({"answer": result["answer"]})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
