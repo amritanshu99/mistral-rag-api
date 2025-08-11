@@ -1,5 +1,6 @@
-flask
 langchain
+langchain-community
+flask
 transformers
 torch
 sentence-transformers

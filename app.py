@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
 from langchain.schema import Document
 from langchain.chains import ConversationalRetrievalChain
-from langchain.vectorstores import Chroma
+from langchain_community.vectorstores import Chroma
 from langchain.memory import ConversationBufferMemory
 from langchain.prompts import PromptTemplate
 from langchain.embeddings import HuggingFaceEmbeddings
