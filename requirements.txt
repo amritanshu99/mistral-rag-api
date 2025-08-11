@@ -1,9 +1,9 @@
-flask==2.3.2
-langchain==0.0.236
-transformers==4.31.0
-torch==2.0.1
-sentence-transformers==2.2.2
-chromadb==0.3.24
-huggingface_hub==0.15.1
-accelerate==0.22.0
+flask
+langchain
+transformers
+torch
+sentence-transformers
+chromadb
+huggingface_hub
+accelerate
 gunicorn
